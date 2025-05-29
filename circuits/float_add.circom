@@ -148,7 +148,19 @@ template CheckBitLength(b) {
     signal input in;
     signal output out;
 
-    // TODO
+    signal bits[b];
+    var sum_of_bits = 0;
+    for (var i = 0; i < b; i++) {
+        bits[i] <-- (in >> i) & 1;
+        bits[i] * (1 - bits[i]) === 0; // enforce that bits[i] is either 0 or 1
+        sum_of_bits += (2 ** i) * bits[i];
+    }
+
+    component is_equal = IsEqual();
+    is_equal.in[0] <== sum_of_bits;
+    is_equal.in[1] <== in;
+
+    out <== is_equal.out;
 }
 
 /*
@@ -194,10 +206,25 @@ template CheckWellFormedness(k, p) {
  */
 template RightShift(b, shift) {
     assert(shift < b);
+
     signal input x;
     signal output y;
 
-    // TODO
+    component x_bits = Num2Bits(b);
+    x_bits.in <== x;
+
+    signal y_bits[b - shift];
+    for (var i = 0; i < b - shift; i++) {
+        y_bits[i] <== x_bits.bits[i + shift];
+    }
+
+    component y_num = Bits2Num(b - shift);
+    y_num.bits <== y_bits;
+    y <== y_num.out;
+
+    component check_y_bits = CheckBitLength(b - shift);
+    check_y_bits.in <== y;
+    check_y_bits.out === 1;
 }
 
 /*
@@ -248,6 +275,30 @@ template RoundAndCheck(k, p, P) {
     m_out <== if_else[1].out;
 }
 
+function log2(b){
+    var n = 1, r = 1;
+    while (n < b) {
+        n *= 2;
+        r++;
+    }
+    return r;
+}
+
+template Num2BitsWithSkipChecks(b) {
+    signal input in;
+    signal input skip_checks;
+    signal output bits[b];
+
+    var sum_of_bits = 0;
+    for (var i = 0; i < b; i++) {
+        bits[i] <-- (shift >> i) & 1;
+        bits[i] * (1 - bits[i]) === 0; // enforce that bits[i] is either 0 or 1
+        sum_of_bits += (2 ** i) * bits[i];
+    }
+
+    (sum_of_bits - in) * (1 - skip_checks) === 0;
+}
+
 /*
  * Left-shifts `x` by `shift` bits to output `y`.
  * Enforces 0 <= `shift` < `shift_bound`.
@@ -259,7 +310,35 @@ template LeftShift(shift_bound) {
     signal input skip_checks;
     signal output y;
 
-    // TODO
+    var n = log2(shift_bound);
+
+    component shift_bits = Num2BitsWithSkipChecks(n);
+    shift_bits.in <== shift;
+    shift_bits.skip_checks <== skip_checks;
+
+    component lt = LessThan(shift_bound);
+    lt.in[0] <== shift;
+    lt.in[1] <== shift_bound;
+    (1 - lt.out) * (1 - skip_checks) === 1;
+
+    var pow_shift = 1;
+    component muxes[n];
+
+    for (var i = 0; i < n; i++) {
+        muxes[i] = IfThenElse();
+        muxes[i].cond <== shift_bits.bits[i];
+        muxes[i].L <== pow_shift * (2 ** (2 ** i));
+        muxes[i].R <== pow_shift;
+        pow_shift = muxes[i].out;
+    }
+
+    component if_else = IfThenElse();
+    if_else.cond <== skip_checks;
+    if_else.L <== 0;
+    if_else.R <== pow_shift;
+    pow_shift = if_else.out;
+
+    y <== x * pow_shift;
 }
 
 /*
